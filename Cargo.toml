@@ -7,4 +7,5 @@ description = "Simple image viewer with vim-motions."
 
 [dependencies]
 clap = { version = "4.5.51", features = ["derive"] }
+image = "0.25.9"
 minifb = { version = "0.28.0", default-features = false, features = ["wayland"] }

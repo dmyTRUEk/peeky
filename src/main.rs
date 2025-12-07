@@ -1,6 +1,7 @@
 //! peeky
 
 use clap::Parser;
+use image::{ImageReader, Rgb};
 use minifb::{Key, Window, WindowOptions};
 
 
@@ -23,16 +24,25 @@ use minifb::{Key, Window, WindowOptions};
 	",
 )]
 struct CliArgs {
+	// // disable fullscreen
+	// #[arg(short='f', long, default_value_t=false)]
+	// disable_fullscreen: bool,
+
 	// verbose output
 	#[arg(short='v', long, default_value_t=false)]
 	verbose: bool,
+
+	/// filepath to image to show
+	filepath: String,
 }
 
 
 
 fn main() {
 	let CliArgs {
+		//disable_fullscreen, // TODO(fix): change "windowing" library?
 		verbose,
+		filepath,
 	} = CliArgs::parse();
 
 	// TODO: config file
@@ -51,6 +61,9 @@ fn main() {
 
 	window.set_target_fps(60);
 	window.update_with_buffer(&buffer, w, h).expect(UNABLE_TO_UPDATE_WINDOW_BUFFER);
+
+	let img = ImageReader::open(&filepath).unwrap().decode().unwrap();
+	let pixels = img.into_rgb8();
 
 	let mut frame_i: u64 = 0;
 	#[allow(unused_labels)]
@@ -88,7 +101,14 @@ fn main() {
 
 			buffer.fill(BG_COLOR.0);
 
-			// TODO
+			for y in 0..pixels.height() {
+				for x in 0..pixels.width() {
+					if let Some(buffer_pixel) = buffer.get_mut(xy_to_buf_index(x, y, w)) {
+						let rgb = pixels.get_pixel(x, y);
+						*buffer_pixel = Color::from(*rgb).0;
+					}
+				}
+			}
 		} // end of render
 
 		window.update_with_buffer(&buffer, w, h).expect(UNABLE_TO_UPDATE_WINDOW_BUFFER);
@@ -96,6 +116,12 @@ fn main() {
 } // end of main
 
 const UNABLE_TO_UPDATE_WINDOW_BUFFER: &str = "unable to update window buffer";
+
+fn xy_to_buf_index(x: u32, y: u32, w: usize) -> usize {
+	(x as usize) + w * (y as usize)
+}
+
+
 
 
 
@@ -114,6 +140,17 @@ const MAGENTA: Color = Color(0xff00ff);
 const YELLOW : Color = Color(0xffff00);
 
 const BG_COLOR: Color = BLACK;
+
+impl From<Rgb<u8>> for Color {
+	fn from(Rgb(rgb): Rgb<u8>) -> Self {
+		Color(rgb_to_u32(rgb))
+	}
+}
+fn rgb_to_u32([r,g,b]: [u8; 3]) -> u32 {
+	u32::from_be_bytes([0xff,r,g,b])
+}
+
+
 
 
 
