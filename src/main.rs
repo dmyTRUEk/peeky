@@ -1,4 +1,8 @@
 //! peeky
+//!
+//! TODO:
+//! - next/prev image random order
+//! - next/prev image walk folders recursively
 
 #![allow(
 	clippy::iter_nth_zero,
@@ -163,6 +167,13 @@ fn main() {
 			is_redraw_needed = true;
 		}
 
+		if window.is_key_pressed_once(Key::N) {
+			// TODO: next image
+		}
+		if window.is_key_pressed_once(Key::P) {
+			// TODO: prev image
+		}
+
 		if is_redraw_needed {
 			frame_i += 1;
 			if verbose { eprintln!("\nframe {frame_i}:") }
@@ -182,8 +193,8 @@ fn main() {
 			for buf_y in 0 .. h as u32 {
 				for buf_x in 0 .. w as u32 {
 					let (img_x, img_y) = screen_to_image(STW{x: buf_x as float, y: buf_y as float, wf: w as float, hf: h as float, cam_x, cam_y, zoom});
-					let img_x: i32 = img_x as _;
-					let img_y: i32 = img_y as _;
+					let img_x: i32 = img_x as _; // TODO?: round
+					let img_y: i32 = img_y as _; // TODO?: round
 					if !(0 <= img_x && img_x < image_w as i32) { continue }
 					if !(0 <= img_y && img_y < image_h as i32) { continue }
 					let img_x: u32 = img_x as _;
