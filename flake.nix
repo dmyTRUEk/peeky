@@ -1,22 +1,44 @@
-# src: https://tonyfinn.com/blog/nix-from-first-principles-flake-edition/nix-8-flakes-and-developer-environments
 {
-	inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+	description = "Simple image viewer using flake.";
 
-	outputs = { self, nixpkgs }:
+	inputs = {
+		nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+		rust-overlay.url = "github:oxalica/rust-overlay"; # for nightly
+	};
+
+	outputs = { self, nixpkgs, rust-overlay }:
 	let
 		system = "x86_64-linux";
 		pkgs = import nixpkgs {
 			inherit system;
-			config.allowUnfree = true;
+			overlays = [ (import rust-overlay) ];
 		};
 	in {
 		devShells.${system}.default = pkgs.mkShell rec {
 			packages = with pkgs; [
 				libxkbcommon # for minifb
 			];
-			# Environment variables:
-			# RUST_BACKTRACE = "full";
-			LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath packages;
+		};
+
+		packages.${system}.default =
+		let
+			rust = pkgs.rust-bin.nightly.latest.default; # nightly toolchain from the overlay
+			cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+			pname = cargoToml.package.name;
+			version = cargoToml.package.version;
+		in
+			pkgs.rustPlatform.buildRustPackage {
+				inherit pname version;
+				src = self;
+				cargoLock.lockFile = ./Cargo.lock;
+				nativeBuildInputs = [
+					rust
+					pkgs.libxkbcommon
+				];
+			};
+		apps.${system}.default = {
+			type = "app";
+			program = "${self.packages.${system}.default}/bin/${self.packages.${system}.default.pname}";
 		};
 	};
 }
