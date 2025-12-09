@@ -204,9 +204,12 @@ fn main() {
 					}
 				}
 			}
-		} // end of render
 
-		window.update_with_buffer(&buffer, w, h).expect(UNABLE_TO_UPDATE_WINDOW_BUFFER);
+			window.update_with_buffer(&buffer, w, h).expect(UNABLE_TO_UPDATE_WINDOW_BUFFER);
+		} // end of render
+		else {
+			window.update();
+		}
 	} // end of main loop
 } // end of main
 
