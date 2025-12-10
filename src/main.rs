@@ -29,7 +29,7 @@
 )]
 
 use clap::Parser;
-use image::{ImageReader, Rgb};
+use image::{ImageBuffer, ImageReader, Rgb};
 use minifb::{Key, Window, WindowOptions};
 
 
@@ -60,8 +60,8 @@ struct CliArgs {
 	#[arg(short='v', long, default_value_t=false)]
 	verbose: bool,
 
-	/// filepath to image to show
-	filepath: String,
+	/// filepaths to images to show
+	filepaths: Vec<String>,
 }
 
 
@@ -70,7 +70,7 @@ fn main() {
 	let CliArgs {
 		//disable_fullscreen, // TODO(fix): change "windowing" library?
 		verbose,
-		filepath,
+		filepaths,
 	} = CliArgs::parse();
 
 	// TODO: config file
@@ -89,23 +89,100 @@ fn main() {
 
 	window.set_target_fps(60);
 	window.update_with_buffer(&buffer, w, h).expect(UNABLE_TO_UPDATE_WINDOW_BUFFER);
+	// window.update();
+	// (w, h) = window.get_size();
 
-	let img = ImageReader::open(&filepath).unwrap().decode().unwrap();
-	let pixels = img.into_rgb8();
+	let filepaths: Vec<String> = filepaths.into_iter()
+		.filter(|filepath| {
+			let is_image = [
+				".jpeg",
+				".jpg",
+				".png",
+				".webp",
+			].iter().any(|extension| {
+				filepath.ends_with(extension)
+			});
+			if !is_image {
+				eprintln!("Unknown image type: {filepath}");
+			}
+			is_image
+		})
+		.collect();
 
-	let zoom_default = 0.001; // TODO: calc from image and window sizes
-	let cam_x_default: float = pixels.dimensions().0 as float / 2.;
-	let cam_y_default: float = pixels.dimensions().1 as float / 2.;
-	let mut zoom : float = zoom_default;
-	let mut cam_x: float = cam_x_default; // TODO: make it centered by default
-	let mut cam_y: float = cam_y_default; // TODO: make it centered by default
+	#[derive(Debug)]
+	enum LoadImageError { OpenFileError, DecodeError }
+	fn load_image_exact(
+		image_index: usize,
+		filepaths: &[String],
+	) -> Result<ImageBuffer<Rgb<u8>, Vec<u8>>, LoadImageError> {
+		use LoadImageError::*;
+		Ok(ImageReader::open(&filepaths[image_index])
+			.map_err(|_e| OpenFileError)?
+			.decode()
+			.map_err(|_e| DecodeError)?
+			.into_rgb8())
+	}
+
+	enum Direction { Forward, Backward }
+	fn load_image(
+		image_index: &mut usize,
+		filepaths: &[String],
+		direction: Direction,
+	) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
+		use LoadImageError::*;
+		let sign: i32 = match direction {
+			Direction::Forward => 1,
+			Direction::Backward => -1,
+		};
+		for i in 0..filepaths.len() as i32 {
+			let i = (*image_index as i32 + sign*i).rem_euclid(filepaths.len() as i32) as usize;
+			match load_image_exact(i, filepaths) {
+				Ok(image_pixels) => {
+					*image_index = i;
+					return image_pixels
+				}
+				Err(OpenFileError) => {
+					eprintln!("Error: cant open file: {}", filepaths[i])
+				}
+				Err(DecodeError) => {
+					eprintln!("Error: cant decode image: {}", filepaths[i])
+				}
+			}
+		}
+		panic!("Cant load any image")
+	}
+
+	let mut image_index: usize = 0;
+	let mut image_pixels: ImageBuffer<_, _> = load_image(&mut image_index, &filepaths, Direction::Forward);
+
+	fn calc_default_cam_xyz(
+		image_wh: (u32, u32),
+		window_buffer_wh: (usize, usize),
+	) -> (float, float, float) {
+		let cam_x_default = (image_wh.0 as float) / 2.;
+		let cam_y_default = (image_wh.1 as float) / 2.;
+		let zoom_default_w = 2. / (image_wh.0 as float);
+		let zoom_default_h = 2. / (image_wh.1 as float);
+		let buffer_aspect_ratio = (window_buffer_wh.1 as float) / (window_buffer_wh.0 as float);
+		let image_aspect_ratio = (image_wh.1 as float) / (image_wh.0 as float);
+		let zoom_default = if buffer_aspect_ratio > image_aspect_ratio {
+			zoom_default_w
+		} else {
+			zoom_default_h * buffer_aspect_ratio
+		};
+		(cam_x_default, cam_y_default, zoom_default)
+	}
+
+	let (mut cam_x_default, mut cam_y_default, mut zoom_default) = calc_default_cam_xyz(image_pixels.dimensions(), (w, h));
+	let (mut cam_x, mut cam_y, mut zoom) = (cam_x_default, cam_y_default, zoom_default);
 	let cam_move_step: float = 0.1;
 	let cam_zoom_step: float = 1.1;
 
-	let mut frame_i: u64 = 0;
+	let mut frame_i: u32 = 0;
 	#[allow(unused_labels)]
 	'mainloop: while window.is_open() && !window.is_key_down(Key::Escape) {
 		let mut is_redraw_needed: bool = frame_i == 0; // condition needed to render first frame
+		let mut is_zoom_reset: bool = false;
 
 		// handle resizing
 		let wh_prev = (w, h);
@@ -115,7 +192,12 @@ fn main() {
 			if let new_size = w * h && new_size != buffer.len() {
 				buffer.resize(new_size, BG_COLOR.0);
 			}
-			if verbose { eprintln!("Resized to {w}x{h}") }
+			if verbose { eprintln!("Resized {wp}x{hp} -> {w}x{h}", wp=wh_prev.0, hp=wh_prev.1) }
+			(cam_x_default, cam_y_default, zoom_default) = calc_default_cam_xyz(image_pixels.dimensions(), (w, h));
+			if frame_i <= 1 { // TODO(fix): better way?
+				(cam_x, cam_y, zoom) = (cam_x_default, cam_y_default, zoom_default);
+				is_zoom_reset = true;
+			}
 			is_redraw_needed = true;
 		}
 
@@ -151,34 +233,42 @@ fn main() {
 			is_redraw_needed = true;
 		}
 
-		let mut is_zoom_reset: bool = false;
 		if window.is_key_pressed_repeat(Key::R) {
+			(cam_x, cam_y, zoom) = (cam_x_default, cam_y_default, zoom_default);
 			is_zoom_reset = true;
-			zoom  = zoom_default;
-			cam_x = cam_x_default;
-			cam_y = cam_y_default;
 			if verbose { eprintln!("zoom & position reset") }
 			is_redraw_needed = true;
 		}
 		if window.is_key_pressed_repeat(Key::Z) {
-			is_zoom_reset = true;
 			zoom  = zoom_default;
+			is_zoom_reset = true;
 			if verbose { eprintln!("zoom reset") }
 			is_redraw_needed = true;
 		}
 
-		if window.is_key_pressed_once(Key::N) {
-			// TODO: next image
+		if window.is_key_pressed_repeat(Key::N) {
+			image_index = (image_index + 1).rem_euclid(filepaths.len());
+			if verbose { eprintln!("image_index={image_index}, filepath: {}", filepaths[image_index]) }
+			image_pixels = load_image(&mut image_index, &filepaths, Direction::Forward);
+			(cam_x_default, cam_y_default, zoom_default) = calc_default_cam_xyz(image_pixels.dimensions(), (w, h));
+			(cam_x, cam_y, zoom) = (cam_x_default, cam_y_default, zoom_default);
+			is_zoom_reset = true;
+			is_redraw_needed = true;
 		}
-		if window.is_key_pressed_once(Key::P) {
-			// TODO: prev image
+		if window.is_key_pressed_repeat(Key::P) {
+			image_index = ((image_index as i32) - 1).rem_euclid(filepaths.len() as i32) as usize;
+			if verbose { eprintln!("image_index={image_index}, filepath: {}", filepaths[image_index]) }
+			image_pixels = load_image(&mut image_index, &filepaths, Direction::Backward);
+			(cam_x_default, cam_y_default, zoom_default) = calc_default_cam_xyz(image_pixels.dimensions(), (w, h));
+			(cam_x, cam_y, zoom) = (cam_x_default, cam_y_default, zoom_default);
+			is_zoom_reset = true;
+			is_redraw_needed = true;
 		}
 
 		if is_redraw_needed {
-			frame_i += 1;
-			if verbose { eprintln!("\nframe {frame_i}:") }
+			if verbose { eprintln!("frame {frame_i}:") }
 
-			if verbose { println!("cam xyz: {cam_x}, {cam_y}, zoom={zoom}") }
+			if verbose { eprintln!("cam xyz: {cam_x}, {cam_y}, zoom={zoom}") }
 			if !is_zoom_reset {
 				// Compute center world coords AFTER zoom
 				let center_world_after = screen_to_image(STW{x:scx, y:scy, wf: w as float, hf: h as float, cam_x, cam_y, zoom});
@@ -189,7 +279,7 @@ fn main() {
 
 			buffer.fill(BG_COLOR.0);
 
-			let (image_w, image_h) = pixels.dimensions();
+			let (image_w, image_h) = image_pixels.dimensions();
 			for buf_y in 0 .. h as u32 {
 				for buf_x in 0 .. w as u32 {
 					let (img_x, img_y) = screen_to_image(STW{x: buf_x as float, y: buf_y as float, wf: w as float, hf: h as float, cam_x, cam_y, zoom});
@@ -199,13 +289,15 @@ fn main() {
 					if !(0 <= img_y && img_y < image_h as i32) { continue }
 					let img_x: u32 = img_x as _;
 					let img_y: u32 = img_y as _;
-					if let Some(img_pixel) = pixels.get_pixel_checked(img_x, img_y) {
+					if let Some(img_pixel) = image_pixels.get_pixel_checked(img_x, img_y) {
 						buffer[xy_to_buf_index(buf_x, buf_y, w)] = Color::from(*img_pixel).0;
 					}
 				}
 			}
 
 			window.update_with_buffer(&buffer, w, h).expect(UNABLE_TO_UPDATE_WINDOW_BUFFER);
+			frame_i += 1;
+			if verbose { eprintln!() }
 		} // end of render
 		else {
 			window.update();
