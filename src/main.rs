@@ -2,10 +2,11 @@
 //!
 //! TODO:
 //! - next/prev image random order
-//! - next/prev image walk folders recursively
+//! - next/prev image walk dirs recursively
 
 #![allow(
 	clippy::iter_nth_zero,
+	clippy::len_zero,
 	clippy::let_and_return,
 	clippy::useless_format,
 )]
@@ -27,6 +28,8 @@
 	clippy::println_empty_string,
 	clippy::unnecessary_cast,
 )]
+
+use std::{fs::read_dir, path::Path};
 
 use clap::Parser;
 use image::{ImageBuffer, ImageReader, Rgb};
@@ -70,7 +73,7 @@ fn main() {
 	let CliArgs {
 		//disable_fullscreen, // TODO(fix): change "windowing" library?
 		verbose,
-		filepaths,
+		mut filepaths,
 	} = CliArgs::parse();
 
 	// TODO: config file
@@ -89,25 +92,64 @@ fn main() {
 
 	window.set_target_fps(60);
 	window.update_with_buffer(&buffer, w, h).expect(UNABLE_TO_UPDATE_WINDOW_BUFFER);
-	// window.update();
-	// (w, h) = window.get_size();
 
-	let filepaths: Vec<String> = filepaths.into_iter()
-		.filter(|filepath| {
-			let is_image = [
-				".jpeg",
-				".jpg",
-				".png",
-				".webp",
-			].iter().any(|extension| {
-				filepath.ends_with(extension)
-			});
-			if !is_image {
-				eprintln!("Unknown image type: {filepath}");
+	fn files_in_dir(dirpath: &str) -> Vec<String> {
+		let mut filepaths = vec![];
+		for entry in read_dir(dirpath).unwrap() {
+			let path = entry.unwrap().path();
+			if path.is_file() {
+				filepaths.push(path.to_str().unwrap().to_string());
 			}
-			is_image
-		})
-		.collect();
+		}
+		filepaths.sort();
+		filepaths
+	}
+
+	let mut image_index: usize = 0;
+	if filepaths.len() == 0 {
+		let dir_path = Path::new(".").canonicalize().unwrap();
+		filepaths = files_in_dir(dir_path.to_str().unwrap());
+	}
+	else if filepaths.len() == 1 {
+		let filepath = filepaths[0].clone();
+		let filepath = Path::new(&filepath);
+		if filepath.is_file() {
+			let filepath = filepath.canonicalize().unwrap();
+			let filepath = filepath.to_str().unwrap();
+			let abs_path = Path::new(filepath).canonicalize().unwrap();
+			let dir_path = abs_path.parent().unwrap();
+			filepaths = files_in_dir(dir_path.to_str().unwrap());
+			image_index = filepaths.iter().position(|fp| *fp == filepath).unwrap();
+		} else if filepath.is_dir() {
+			let dir_path = filepath;
+			filepaths = files_in_dir(dir_path.to_str().unwrap());
+		}
+	}
+
+	fn filter_images(filepaths: Vec<String>, image_index: &mut usize) -> Vec<String> {
+		let image_filepath = filepaths[*image_index].clone();
+		let filepaths: Vec<String> = filepaths.into_iter()
+			.filter(|filepath| {
+				if !Path::new(filepath).is_file() { return false }
+				let is_image = [
+					".jpeg",
+					".jpg",
+					".png",
+					".webp",
+				].iter().any(|extension| {
+					filepath.ends_with(extension)
+				});
+				if !is_image {
+					eprintln!("Unknown image type: {filepath}");
+				}
+				is_image
+			})
+			.collect();
+		*image_index = filepaths.iter().position(|fp| *fp == image_filepath).unwrap_or(0);
+		filepaths
+	}
+
+	let filepaths: Vec<String> = filter_images(filepaths, &mut image_index);
 
 	#[derive(Debug)]
 	enum LoadImageError { OpenFileError, DecodeError }
@@ -152,7 +194,6 @@ fn main() {
 		panic!("Cant load any image")
 	}
 
-	let mut image_index: usize = 0;
 	let mut image_pixels: ImageBuffer<_, _> = load_image(&mut image_index, &filepaths, Direction::Forward);
 
 	fn calc_default_cam_xyz(
